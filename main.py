@@ -4,9 +4,9 @@ import os
 
 app = FastAPI()
 
-TELEGRAM_TOKEN = os.getenv("")
-OPENAI_API_KEY = os.getenv("")
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{}"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 async def generate_response(question: str) -> str:
     prompt = f"You are a creative AI that answers wild 'what if' questions mixing science, philosophy, and fiction. Here's one:\nQ: {question}\nA:"
