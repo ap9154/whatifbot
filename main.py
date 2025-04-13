@@ -1,62 +1,76 @@
-from fastapi import FastAPI, Request
-import httpx
 import os
+import logging
+from telegram import Update, ForceReply
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from dotenv import load_dotenv
+import openai
+import asyncio
 
-app = FastAPI()
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+# Load environment variables from .env file
+load_dotenv()
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-# Auto-register webhook with Telegram on startup
-@app.on_event("startup")
-async def register_webhook():
-    if WEBHOOK_URL:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{TELEGRAM_API_URL}/setWebhook",
-                json={"url": WEBHOOK_URL}
-            )
+# Set the OpenAI API key
+openai.api_key = OPENAI_API_KEY
 
-# Generates a creative response to "what if" questions
-async def generate_response(question: str) -> str:
-    prompt = f"You are a creative AI that answers wild 'what if' questions mixing science, philosophy, and fiction. Here's one:\nQ: {question}\nA:"
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "gpt-3.5-turbo",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.9,
-                "max_tokens": 300
-            },
+# Set up logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+# Start command handler
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user = update.effective_user
+    await update.message.reply_html(
+        rf"Hi {user.mention_html()}! I'm your What If? bot. Ask me any wild what-if question!",
+        reply_markup=ForceReply(selective=True),
+    )
+
+# Function to generate response from OpenAI
+async def generate_response(text: str):
+    try:
+        response = await openai.ChatCompletion.acreate(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a bot that gives wild 'what if' answers based on science, fiction, and philosophy."},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.9,
+            max_tokens=300,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
         )
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
 
-@app.post("/webhook")
-async def telegram_webhook(req: Request):
-    payload = await req.json()
-    
-    if "message" in payload:
-        chat_id = payload["message"]["chat"]["id"]
-        text = payload["message"].get("text", "")
+        data = response
 
-        if text.lower().startswith("what if"):
-            reply = await generate_response(text)
+        if "choices" in data and len(data["choices"]) > 0:
+            return data["choices"][0]["message"]["content"].strip()
         else:
-            reply = "Send me a 'What if?' question, and I'll take you on a wild ride 🌌"
+            logger.error("Response structure invalid or 'choices' not found.")
+            return "Sorry, I couldn't generate a response."
+    except Exception as e:
+        logger.error(f"An error occurred in generate_response: {e}")
+        return "An error occurred while processing your request."
 
-        async with httpx.AsyncClient() as client:
-            await client.post(f"{TELEGRAM_API_URL}/sendMessage", json={
-                "chat_id": chat_id,
-                "text": reply
-            })
+# Message handler
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_input = update.message.text
+    await update.message.chat.send_action(action="typing")
+    answer = await generate_response(user_input)
+    await update.message.reply_text(answer)
 
-    return {"ok": True}
+# Main function to start the bot
+def main() -> None:
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    logger.info("Bot started...")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
