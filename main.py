@@ -6,7 +6,20 @@ app = FastAPI()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Add this in Render ENV vars
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
+
+
+async def set_webhook():
+    """Set Telegram webhook when server starts"""
+    async with httpx.AsyncClient() as client:
+        await client.post(f"{TELEGRAM_API_URL}/setWebhook", params={"url": WEBHOOK_URL})
+
+
+@app.on_event("startup")
+async def startup_event():
+    await set_webhook()
+
 
 async def generate_response(question: str) -> str:
     prompt = f"You are a creative AI that answers wild 'what if' questions mixing science, philosophy, and fiction. Here's one:\nQ: {question}\nA:"
@@ -28,14 +41,15 @@ async def generate_response(question: str) -> str:
         data = response.json()
         return data["choices"][0]["message"]["content"].strip()
 
-@app.post(f"/webhook")
+
+@app.post("/webhook")
 async def telegram_webhook(req: Request):
     payload = await req.json()
-    
+
     if "message" in payload:
         chat_id = payload["message"]["chat"]["id"]
         text = payload["message"].get("text", "")
-        
+
         if text.lower().startswith("what if"):
             reply = await generate_response(text)
         else:
